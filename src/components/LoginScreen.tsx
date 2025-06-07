@@ -1,14 +1,12 @@
- 
-import { Wallet, Shield, TrendingUp, Zap } from 'lucide-react';
-import { EmailLogin } from './EmailLogin'; 
-import { GoogleLogin } from './GoogleLogin'; 
+import { Wallet, Shield, TrendingUp, Zap } from "lucide-react";
+import { EmailLogin } from "./EmailLogin";
+import { GoogleLogin } from "./GoogleLogin";
 
 type LoginScreenProps = {
   onLogin: (token: string) => void;
 };
 
 export function LoginScreen({ onLogin }: LoginScreenProps) {
-    
   const handleLogin = (authToken: string) => {
     if (authToken) {
       onLogin(authToken);
@@ -29,7 +27,9 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
             <Wallet className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-white mb-2">Okto Dashboard</h1>
-          <p className="text-gray-400">Your gateway to Web3 portfolio management</p>
+          <p className="text-gray-400">
+            Your gateway to Web3 portfolio management
+          </p>
         </div>
 
         <div className="grid grid-cols-2 gap-4 mb-8">
@@ -51,10 +51,8 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           </div>
         </div>
 
-         <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-6 space-y-6">
-          
-
-           <div className="login-container space-y-4">
+        <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-6 space-y-6">
+          <div className="login-container space-y-4">
             <EmailLogin onLoginSuccess={handleLogin} />
             <div className="divider text-center text-gray-500 text-sm">OR</div>
             <GoogleLogin onLoginSuccess={handleGoogleLogin} />

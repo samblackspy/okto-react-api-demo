@@ -19,7 +19,7 @@ export function EmailLogin({ onLoginSuccess }: EmailLoginProps) {
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-   const createClientSignatureForOtp = async (data: Record<string, any>) => {
+  const createClientSignatureForOtp = async (data: Record<string, any>) => {
     const clientSigner = new EthersWallet(
       import.meta.env.VITE_OKTO_CLIENT_PRIVATE_KEY as string
     );

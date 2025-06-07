@@ -1,10 +1,22 @@
 import React from "react";
 import { X, Loader2, Copy, Check } from "lucide-react";
 
+export type ApiResult =
+  | {
+      status: "success" | "error";
+      data?: unknown;
+      message?: string;
+      error?: {
+        message: string;
+        code?: string | number;
+      };
+    }
+  | Record<string, unknown>;
+
 type ResultModalProps = {
   isOpen: boolean;
   onClose: () => void;
-  result: any;
+  result: ApiResult | null;
   isLoading: boolean;
 };
 
@@ -31,7 +43,6 @@ export function ResultModal({
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
       <div className="bg-slate-900/95 backdrop-blur-md border border-white/20 rounded-2xl max-w-4xl w-full max-h-[80vh] overflow-hidden">
-        {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-white/10">
           <h3 className="text-xl font-semibold text-white flex items-center">
             {isLoading ? (
@@ -66,7 +77,6 @@ export function ResultModal({
           </div>
         </div>
 
-        {/* Content */}
         <div className="p-6 overflow-auto max-h-[60vh]">
           {isLoading ? (
             <div className="flex items-center justify-center py-12">

@@ -46,10 +46,102 @@ export interface Token {
 }
 
 export interface OktoErrorResponse {
-  status: string;
+  status: "error";
   message: string;
   code?: number;
-  error?: any;
+  error?: {
+    message: string;
+    code?: number;
+    details?: unknown;
+  };
+}
+
+export interface GasDetails {
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
+}
+
+export interface TokenTransferEstimateRequest {
+  type: string;
+  jobId: string;
+  gasDetails: GasDetails;
+  paymasterData: string;
+  details: {
+    recipientWalletAddress: string;
+    caip2Id: string;
+    tokenAddress: string;
+    amount: string;
+  };
+}
+
+export interface RawTransactionEstimateRequest {
+  type: string;
+  jobId: string;
+  gasDetails: GasDetails;
+  paymasterData: string;
+  details: {
+    caip2Id: string;
+    transactions: Array<{
+      data: string;
+      from: string;
+      to: string;
+      value: string;
+    }>;
+  };
+}
+
+export interface ExecuteRequest {
+  sender: string;
+  nonce: string;
+  paymaster: string;
+  callGasLimit: string;
+  verificationGasLimit: string;
+  preVerificationGas: string;
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
+  paymasterPostOpGasLimit: string;
+  paymasterVerificationGasLimit: string;
+  callData: string;
+  paymasterData: string;
+  signature: string;
+}
+
+export interface EstimateResponseData {
+  callData: string;
+  details: {
+    callGasLimit: string;
+    verificationGasLimit: string;
+    preVerificationGas: string;
+    paymasterVerificationGasLimit: string;
+    paymasterPostOpGasLimit: string;
+    maxFeePerGas: string;
+    maxPriorityFeePerGas: string;
+  };
+  userOps: ExecuteRequest;
+}
+
+export interface EstimateResponse {
+  status: "success" | "error";
+  data: EstimateResponseData;
+  error?: {
+    message: string;
+    code?: number;
+  };
+}
+
+export interface ExecuteResponseData {
+  jobId: string;
+  transactionHash?: string;
+  status?: string;
+}
+
+export interface ExecuteResponse {
+  status: "success" | "error";
+  data: ExecuteResponseData;
+  error?: {
+    message: string;
+    code?: number;
+  };
 }
 
 export interface SendEmailOtpResponse {
@@ -178,7 +270,7 @@ export async function authenticateWithOkto(
         sessionPk,
         maxPriorityFeePerGas: "0xBA43B7400",
         maxFeePerGas: "0xBA43B7400",
-        paymaster: "0x74324fA6Fa67b833dfdea4C1b3A9898574d076e3",  
+        paymaster: "0x74324fA6Fa67b833dfdea4C1b3A9898574d076e3",
         paymasterData,
       },
       sessionPkClientSignature,
@@ -187,7 +279,7 @@ export async function authenticateWithOkto(
 
     console.log("Auth payload:", authPayload);
 
-     const response = await fetch(`${API_BASE_URL}/authenticate`, {
+    const response = await fetch(`${API_BASE_URL}/authenticate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(authPayload),
@@ -197,7 +289,7 @@ export async function authenticateWithOkto(
     console.log("Auth response:", result);
 
     if (response.status === 200 && result.data) {
-       const sessionConfig: SessionConfig = {
+      const sessionConfig: SessionConfig = {
         sessionPrivKey: sessionWallet.privateKey,
         sessionPubKey: sessionPk,
         userSWA: result.data.userSWA,
@@ -205,7 +297,7 @@ export async function authenticateWithOkto(
 
       console.log("Session config:", sessionConfig);
 
-       const authToken = await getAuthorizationToken(sessionConfig);
+      const authToken = await getAuthorizationToken(sessionConfig);
       console.log("Generated auth token:", authToken);
 
       return {
@@ -226,12 +318,18 @@ export async function authenticateWithOkto(
         error: result.error,
       };
     }
-  } catch (error: any) {
+  } catch (error) {
     console.error("Authentication error:", error);
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "An error occurred during authentication";
     return {
       status: "error",
-      message: error.message || "An error occurred during authentication",
-      error,
+      message: errorMessage,
+      error: {
+        message: errorMessage,
+      },
     };
   }
 }
@@ -315,47 +413,238 @@ export async function getSupportedTokens(
   return r.status === "success" ? r.data.tokens : r;
 }
 
+export interface Portfolio {
+  total_balance: number;
+  assets: Array<{
+    symbol: string;
+    balance: string;
+    value_usd: number;
+  }>;
+}
+
 export async function getPortfolio(
   token: string
-): Promise<any | OktoErrorResponse> {
+): Promise<Portfolio | OktoErrorResponse> {
   const response = await fetch(`${API_BASE_URL}/aggregated-portfolio`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return response.json();
+  const data = await response.json();
+  return data.status === "success" ? data.data : data;
+}
+
+export interface Activity {
+  id: string;
+  type: string;
+  amount: string;
+  timestamp: number;
 }
 
 export async function getPortfolioActivity(
   token: string
-): Promise<any | OktoErrorResponse> {
+): Promise<Activity[] | OktoErrorResponse> {
   const response = await fetch(`${API_BASE_URL}/portfolio/activity`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return response.json();
+  const data = await response.json();
+  return data.status === "success" ? data.data : data;
+}
+
+export interface NFT {
+  token_id: string;
+  name: string;
+  image_url: string;
 }
 
 export async function getPortfolioNFT(
   token: string
-): Promise<any | OktoErrorResponse> {
+): Promise<NFT[] | OktoErrorResponse> {
   const response = await fetch(`${API_BASE_URL}/portfolio/nft`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return response.json();
+  const data = await response.json();
+  return data.status === "success" ? data.data : data;
+}
+
+export interface Order {
+  id: string;
+  status: string;
+  amount: string;
+  created_at: string;
 }
 
 export async function getOrdersHistory(
   token: string
-): Promise<any | OktoErrorResponse> {
+): Promise<Order[] | OktoErrorResponse> {
   const response = await fetch(`${API_BASE_URL}/orders`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return response.json();
+  const data = await response.json();
+  return data.status === "success" ? data.data : data;
+}
+
+export interface SessionInfo {
+  is_valid: boolean;
+  user_id: string;
+  expires_at: number;
 }
 
 export async function verifySession(
   token: string
-): Promise<any | OktoErrorResponse> {
-  const response = await fetch(`${API_BASE_URL}/verify-session`, {
-    headers: { Authorization: `Bearer ${token}` },
+): Promise<SessionInfo | OktoErrorResponse> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/verify-session`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const data = await response.json();
+    return data.status === "success" ? data.data : data;
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to verify session";
+    return {
+      status: "error",
+      message: errorMessage,
+      error: {
+        message: errorMessage,
+      },
+    };
+  }
+}
+
+export async function estimateTokenTransfer(
+  token: string,
+  jobId: string,
+  recipientWalletAddress: string,
+  caip2Id: string,
+  tokenAddress: string,
+  amount: string,
+  maxFeePerGas: string,
+  maxPriorityFeePerGas: string,
+  paymasterData: string
+): Promise<EstimateResponse | OktoErrorResponse> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/estimate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        type: "TOKEN_TRANSFER",
+        jobId,
+        gasDetails: {
+          maxFeePerGas,
+          maxPriorityFeePerGas,
+        },
+        paymasterData,
+        details: {
+          recipientWalletAddress,
+          caip2Id,
+          tokenAddress,
+          amount,
+        },
+      } as TokenTransferEstimateRequest),
+    });
+    return await response.json();
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "Failed to estimate token transfer";
+    return {
+      status: "error",
+      message: errorMessage,
+      error: {
+        message: errorMessage,
+      },
+    };
+  }
+}
+
+export async function estimateRawTransaction(
+  token: string,
+  jobId: string,
+  caip2Id: string,
+  transactions: Array<{
+    data: string;
+    from: string;
+    to: string;
+    value: string;
+  }>,
+  maxFeePerGas: string,
+  maxPriorityFeePerGas: string,
+  paymasterData: string
+): Promise<EstimateResponse | OktoErrorResponse> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/estimate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        type: "RAW_TRANSACTION",
+        jobId,
+        gasDetails: {
+          maxFeePerGas,
+          maxPriorityFeePerGas,
+        },
+        paymasterData,
+        details: {
+          caip2Id,
+          transactions,
+        },
+      } as RawTransactionEstimateRequest),
+    });
+    return await response.json();
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "Failed to estimate raw transaction";
+    return {
+      status: "error",
+      message: errorMessage,
+      error: {
+        message: errorMessage,
+      },
+    };
+  }
+}
+
+export async function executeTransaction(
+  token: string,
+  request: ExecuteRequest
+): Promise<ExecuteResponse | OktoErrorResponse> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/execute`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(request),
+    });
+    return await response.json();
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to execute transaction";
+    return {
+      status: "error",
+      message: errorMessage,
+      error: {
+        message: errorMessage,
+      },
+    };
+  }
+}
+
+export function generateJobId(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
   });
-  return response.json();
 }
