@@ -3,14 +3,36 @@ import {
   estimateTokenTransfer,
   Token,
   getSupportedTokens,
-  getPortfolio,
   generateJobId,
   executeTransaction,
   EstimateResponse,
   ExecuteResponse,
-  Portfolio
 } from "../services/oktoApi";
 import { Loader2, Send, CheckCircle, XCircle, ArrowLeft } from "lucide-react";
+
+interface PortfolioToken {
+  id: string;
+  name: string;
+  symbol: string;
+  short_name: string;
+  token_image: string;
+  token_address: string;
+  network_id: string;
+  precision: string;
+  network_name: string;
+  is_primary: boolean;
+  balance: string;
+  holdings_price_usdt: string;
+  holdings_price_inr: string;
+}
+
+interface PortfolioGroup {
+  id: string;
+  tokens: PortfolioToken[];
+  [key: string]: any;
+}
+
+const API_BASE_URL = "https://sandbox-api.okto.tech/api/oc/v1";
 
 type TransferStatus = 'idle' | 'estimating' | 'sending' | 'success' | 'error';
 
@@ -66,31 +88,34 @@ export function TransferToken({ token, onSuccess, onError, onBack }: TransferTok
         // Fetch all data in parallel
         const [tokensData, portfolioData] = await Promise.all([
           getSupportedTokens(token),
-          getPortfolio(token),
+          fetch(`${API_BASE_URL}/portfolio/overview`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }).then(res => res.json()),
         ]);
 
         // Process tokens from portfolio to get user's tokens with balances
         const tokensWithBalance: UserToken[] = [];
 
-        if ('assets' in portfolioData) {
-          const portfolio = portfolioData as Portfolio;
-          
-          // Process assets from the aggregated portfolio
-          portfolio.assets.forEach((asset: { symbol: string; balance: string; value_usd: number }) => {
-            const tokenInfo = Array.isArray(tokensData) && 
-              (tokensData as Token[]).find(t => 
-                t.symbol === asset.symbol
-              );
+        if (portfolioData?.group_tokens) {
+          (portfolioData.group_tokens as PortfolioGroup[]).forEach((group: PortfolioGroup) => {
+            group.tokens.forEach((token: PortfolioToken) => {
+              if (parseFloat(token.balance) > 0) {
+                const tokenInfo = Array.isArray(tokensData) && 
+                  (tokensData as Token[]).find(t => 
+                    t.address?.toLowerCase() === token.token_address?.toLowerCase()
+                  );
 
-            if (tokenInfo) {
-              tokensWithBalance.push({
-                ...tokenInfo,
-                balance: asset.balance,
-                network_name: tokenInfo.network_name || 'ethereum',
-                network_id: '1',
-                decimals: 18,
-              });
-            }
+                if (tokenInfo) {
+                  tokensWithBalance.push({
+                    ...tokenInfo,
+                    balance: token.balance,
+                    network_name: token.network_name,
+                    network_id: token.network_id,
+                    decimals: parseInt(token.precision) || 18,
+                  });
+                }
+              }
+            });
           });
         }
 
