@@ -413,6 +413,48 @@ export async function getSupportedTokens(
   return r.status === "success" ? r.data.tokens : r;
 }
 
+export interface PortfolioOverview {
+  aggregated_data: {
+    holdings_count: string;
+    holdings_price_inr: string;
+    holdings_price_usdt: string;
+    total_holding_price_inr: string;
+    total_holding_price_usdt: string;
+  };
+  group_tokens: Array<{
+    id: string;
+    name: string;
+    symbol: string;
+    short_name: string;
+    token_image: string;
+    token_address: string;
+    group_id: string;
+    network_id: string;
+    precision: string;
+    network_name: string;
+    is_primary: boolean;
+    balance: string;
+    holdings_price_usdt: string;
+    holdings_price_inr: string;
+    aggregation_type: string;
+    tokens: Array<{
+      id: string;
+      name: string;
+      symbol: string;
+      short_name: string;
+      token_image: string;
+      token_address: string;
+      network_id: string;
+      precision: string;
+      network_name: string;
+      is_primary: boolean;
+      balance: string;
+      holdings_price_usdt: string;
+      holdings_price_inr: string;
+    }>;
+  }>;
+}
+
 export interface Portfolio {
   total_balance: number;
   assets: Array<{
@@ -422,14 +464,49 @@ export interface Portfolio {
   }>;
 }
 
+export async function getPortfolioOverview(
+  token: string
+): Promise<PortfolioOverview | OktoErrorResponse> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/portfolio/overview`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching portfolio overview:', error);
+    return {
+      status: 'error',
+      message: error instanceof Error ? error.message : 'Failed to fetch portfolio overview'
+    };
+  }
+}
+
 export async function getPortfolio(
   token: string
 ): Promise<Portfolio | OktoErrorResponse> {
-  const response = await fetch(`${API_BASE_URL}/aggregated-portfolio`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const data = await response.json();
-  return data.status === "success" ? data.data : data;
+  try {
+    const response = await fetch(`${API_BASE_URL}/aggregated-portfolio`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data.status === "success" ? data.data : data;
+  } catch (error) {
+    console.error('Error fetching portfolio:', error);
+    return {
+      status: 'error',
+      message: error instanceof Error ? error.message : 'Failed to fetch portfolio'
+    };
+  }
 }
 
 export interface Activity {

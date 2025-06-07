@@ -1,539 +1,355 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   estimateTokenTransfer,
-  estimateRawTransaction,
-  executeTransaction,
-  generateJobId,
   Token,
-  Network,
-  Wallet,
-  EstimateResponse,
-  getSupportedNetworks,
   getSupportedTokens,
-  getWallets,
+  getPortfolioOverview,
+  generateJobId,
+  executeTransaction,
+  EstimateResponse,
+  ExecuteResponse,
+  PortfolioOverview
 } from "../services/oktoApi";
-import { Loader2, Send, FileText, CheckCircle, XCircle } from "lucide-react";
+import { Loader2, Send, CheckCircle, XCircle, ArrowLeft } from "lucide-react";
+
+type TransferStatus = 'idle' | 'estimating' | 'sending' | 'success' | 'error';
+
+interface UserToken extends Token {
+  balance: string;
+  network_name: string;
+  network_id: string;
+  decimals: number;
+}
 
 interface TransferTokenProps {
   token: string;
   onSuccess?: (result: unknown) => void;
   onError?: (error: unknown) => void;
   onBack: () => void;
-  defaultTab?: TransferType;
 }
 
-type TransferType = "TOKEN_TRANSFER" | "RAW_TRANSACTION";
+const formatBalance = (balance: string, decimals: number = 18): string => {
+  try {
+    const num = parseFloat(balance) / Math.pow(10, decimals);
+    return num.toLocaleString(undefined, {
+      minimumFractionDigits: 4,
+      maximumFractionDigits: 4,
+    });
+  } catch (error) {
+    console.error('Error formatting balance:', error);
+    return '0';
+  }
+};
 
-export function TransferToken({
-  token,
-  onSuccess,
-  onError,
-  onBack,
-  defaultTab = "TOKEN_TRANSFER",
-}: TransferTokenProps) {
-  const [tokens, setTokens] = useState<Token[]>([]);
-  const [networks, setNetworks] = useState<Network[]>([]);
-  const [wallets, setWallets] = useState<Wallet[]>([]);
-  const [isLoadingData, setIsLoadingData] = useState(true);
-  const [dataError, setDataError] = useState<string | null>(null);
+export function TransferToken({ token, onSuccess, onError, onBack }: TransferTokenProps) {
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [transferStatus, setTransferStatus] = useState<TransferStatus>('idle');
+  const [amount, setAmount] = useState<string>('');
+  const [recipientAddress, setRecipientAddress] = useState<string>('');
+  const [transactionHash, setTransactionHash] = useState<string>('');
+  const [userTokens, setUserTokens] = useState<UserToken[]>([]);
+  const [selectedToken, setSelectedToken] = useState<UserToken | null>(null);
 
+  // Filtered tokens that the user actually has a balance for
+  const availableTokens = useMemo(() => {
+    return userTokens.filter(t => parseFloat(t.balance) > 0);
+  }, [userTokens]);
+
+  // Fetch all necessary data on component mount
   useEffect(() => {
     const fetchData = async () => {
       try {
-        setIsLoadingData(true);
-        setDataError(null);
+        setIsLoading(true);
+        setError(null);
 
-        const [networksData, tokensData, walletsData] = await Promise.all([
-          getSupportedNetworks(token),
+        // Fetch all data in parallel
+        const [tokensData, portfolioData] = await Promise.all([
           getSupportedTokens(token),
-          getWallets(token),
+          getPortfolioOverview(token),
         ]);
 
-        if ("error" in networksData) {
-          throw new Error(
-            networksData.error?.message || "Failed to load networks"
-          );
-        }
-        if ("error" in tokensData) {
-          throw new Error(tokensData.error?.message || "Failed to load tokens");
-        }
-        if (Array.isArray(walletsData) && walletsData.length === 0) {
-          throw new Error("No wallets found");
+        // Process tokens from portfolio to get user's tokens with balances
+        const tokensWithBalance: UserToken[] = [];
+
+        if ('group_tokens' in portfolioData) {
+          const portfolio = portfolioData as PortfolioOverview;
+          
+          portfolio.group_tokens.forEach(group => {
+            group.tokens.forEach(token => {
+              if (parseFloat(token.balance) > 0) {
+                const tokenInfo = Array.isArray(tokensData) && 
+                  (tokensData as Token[]).find(t => 
+                    t.address?.toLowerCase() === token.token_address?.toLowerCase()
+                  );
+
+                if (tokenInfo) {
+                  tokensWithBalance.push({
+                    ...tokenInfo,
+                    balance: token.balance,
+                    network_name: token.network_name,
+                    network_id: token.network_id,
+                    decimals: parseInt(token.precision) || 18,
+                  });
+                }
+              }
+            });
+          });
         }
 
-        setNetworks(Array.isArray(networksData) ? networksData : []);
-        setTokens(Array.isArray(tokensData) ? tokensData : []);
-        setWallets(Array.isArray(walletsData) ? walletsData : []);
 
-        if (Array.isArray(networksData) && networksData.length > 0) {
-          setSelectedNetwork(networksData[0].caip_id);
-          setRawTxNetwork(networksData[0].caip_id);
+        setUserTokens(tokensWithBalance);
+
+        // Set the first available token as selected if any
+        if (tokensWithBalance.length > 0) {
+          setSelectedToken(tokensWithBalance[0]);
         }
-        if (Array.isArray(walletsData) && walletsData.length > 0) {
-          setFromAddress(walletsData[0].address);
-        }
-      } catch (error) {
-        console.error("Error loading data:", error);
-        setDataError(
-          error instanceof Error ? error.message : "Failed to load data"
-        );
+      } catch (err) {
+        console.error('Error fetching data:', err);
+        const errorMessage = err instanceof Error ? err.message : 'Failed to load data';
+        setError(errorMessage);
+        onError?.(err);
       } finally {
-        setIsLoadingData(false);
+        setIsLoading(false);
       }
     };
 
     fetchData();
-  }, [token]);
-  const [transferType, setTransferType] = useState<TransferType>(defaultTab);
-  const [isLoading, setIsLoading] = useState(false);
-  const [status, setStatus] = useState<{
-    type: "idle" | "success" | "error";
-    message: string;
-  } | null>(null);
+  }, [token, onError]);
 
-  const [selectedToken, setSelectedToken] = useState("");
-  const [selectedNetwork, setSelectedNetwork] = useState("");
-  const [recipientAddress, setRecipientAddress] = useState("");
-  const [amount, setAmount] = useState("");
-
-  const [rawTxNetwork, setRawTxNetwork] = useState("");
-  const [fromAddress, setFromAddress] = useState("");
-  const [toAddress, setToAddress] = useState("");
-  const [value, setValue] = useState("");
-  const [data, setData] = useState("");
-
-  const resetStatus = () => {
-    setTimeout(() => setStatus(null), 5000);
-  };
-
-  const handleTokenTransfer = async (e: React.FormEvent) => {
+  const handleTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setStatus(null);
+
+    if (!selectedToken || !amount || !recipientAddress) {
+      setError('Please fill in all fields');
+      return;
+    }
 
     try {
+      setTransferStatus('estimating');
+      setError(null);
+
+      // Generate a job ID for this transaction
       const jobId = generateJobId();
 
-      const response = await estimateTokenTransfer(
+      // Estimate the transaction
+      const estimate = await estimateTokenTransfer(
         token,
         jobId,
         recipientAddress,
-        selectedNetwork,
-        selectedToken,
+        selectedToken.network_id,
+        selectedToken.address,
         amount,
-        "0x77359400",
-        "0x77359400",
-        "0x"
+        '0', // maxFeePerGas - will be set by the API
+        '0', // maxPriorityFeePerGas - will be set by the API
+        '' // paymasterData - can be empty for now
       );
 
-      if ("error" in response) {
-        throw new Error(
-          response.error?.message || "Failed to estimate token transfer"
-        );
+      if ('error' in estimate) {
+        const errorMessage = typeof estimate.error === 'string' 
+          ? estimate.error 
+          : estimate.error?.message || 'Failed to estimate transaction';
+        throw new Error(errorMessage);
       }
 
-      const estimateResponse = response as EstimateResponse;
+      setTransferStatus('sending');
 
-      if (!estimateResponse.data?.userOps) {
-        throw new Error("Invalid response from token transfer estimate");
-      }
-
+      // Execute the transaction
       const result = await executeTransaction(
         token,
-        estimateResponse.data.userOps
+        (estimate as EstimateResponse).data.userOps
       );
 
-      if (result.status === "success") {
-        setStatus({
-          type: "success",
-          message: "Token transfer initiated successfully!",
-        });
-        onSuccess?.(result);
-      } else {
-        throw new Error("Failed to execute token transfer");
+      if ('error' in result) {
+        const errorMessage = typeof result.error === 'string'
+          ? result.error
+          : result.error?.message || 'Transaction failed';
+        throw new Error(errorMessage);
       }
-    } catch (error) {
-      console.error("Token transfer error:", error);
-      setStatus({
-        type: "error",
-        message:
-          error instanceof Error ? error.message : "Failed to transfer tokens",
-      });
-      onError?.(error);
-    } finally {
-      setIsLoading(false);
-      resetStatus();
+
+      setTransactionHash((result as ExecuteResponse).data.transactionHash || '');
+      setTransferStatus('success');
+      onSuccess?.(result);
+
+    } catch (err) {
+      console.error('Transfer error:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Transaction failed';
+      setError(errorMessage);
+      setTransferStatus('error');
+      onError?.(err);
     }
   };
 
-  const handleRawTransaction = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setStatus(null);
-
-    try {
-      const jobId = generateJobId();
-
-      const transaction = {
-        data: data || "0x",
-        from: fromAddress,
-        to: toAddress,
-        value: value || "0x0",
-      };
-
-      const response = await estimateRawTransaction(
-        token,
-        jobId,
-        rawTxNetwork,
-        [transaction],
-        "0x77359400",
-        "0x77359400",
-        "0x"
-      );
-
-      if ("error" in response) {
-        throw new Error(
-          response.error?.message || "Failed to estimate raw transaction"
-        );
-      }
-
-      const estimateResponse = response as EstimateResponse;
-
-      if (!estimateResponse.data?.userOps) {
-        throw new Error("Invalid response from raw transaction estimate");
-      }
-
-      const result = await executeTransaction(
-        token,
-        estimateResponse.data.userOps
-      );
-
-      if (result.status === "success") {
-        setStatus({
-          type: "success",
-          message: "Raw transaction executed successfully!",
-        });
-        onSuccess?.(result);
-      } else {
-        throw new Error("Failed to execute raw transaction");
-      }
-    } catch (error) {
-      console.error("Raw transaction error:", error);
-      setStatus({
-        type: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Failed to execute raw transaction",
-      });
-      onError?.(error);
-    } finally {
-      setIsLoading(false);
-      resetStatus();
+  const handleMaxClick = () => {
+    if (selectedToken) {
+      // Convert balance from wei/smallest unit to token units
+      const balance = parseFloat(selectedToken.balance) / Math.pow(10, selectedToken.decimals || 18);
+      setAmount(balance.toString());
     }
   };
+  
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+        <span className="ml-2">Loading tokens...</span>
+      </div>
+    );
+  }
 
-  return (
-    <div className="bg-white/5 rounded-xl p-6 backdrop-blur-sm border border-white/10">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={onBack}
-            className="text-gray-300 hover:text-white p-1 rounded-full hover:bg-white/10"
-            title="Go back"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-            >
-              <path
-                fillRule="evenodd"
-                d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z"
-                clipRule="evenodd"
-              />
-            </svg>
-          </button>
-          <h2 className="text-xl font-semibold text-white">
-            {transferType === "TOKEN_TRANSFER"
-              ? "Transfer Tokens"
-              : "Send Raw Transaction"}
-          </h2>
-        </div>
-
-        <div className="flex space-x-2 bg-white/5 rounded-lg p-1">
-          <button
-            type="button"
-            onClick={() => setTransferType("TOKEN_TRANSFER")}
-            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-              transferType === "TOKEN_TRANSFER"
-                ? "bg-blue-600 text-white"
-                : "text-gray-300 hover:bg-white/10"
-            }`}
-          >
-            Token Transfer
-          </button>
-          <button
-            type="button"
-            onClick={() => setTransferType("RAW_TRANSACTION")}
-            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-              transferType === "RAW_TRANSACTION"
-                ? "bg-blue-600 text-white"
-                : "text-gray-300 hover:bg-white/10"
-            }`}
-          >
-            Raw Transaction
-          </button>
+  if (availableTokens.length === 0) {
+    return (
+      <div className="p-4">
+        <button
+          onClick={onBack}
+          className="flex items-center text-sm text-blue-500 hover:text-blue-700 mb-4"
+        >
+          <ArrowLeft className="w-4 h-4 mr-1" /> Back
+        </button>
+        <div className="text-center p-8 bg-gray-50 rounded-lg">
+          <p className="text-gray-600">No tokens available for transfer</p>
         </div>
       </div>
+    );
+  }
 
-      {(status || dataError) && (
-        <div
-          className={`mb-4 p-3 rounded-md ${
-            status?.type === "success"
-              ? "bg-green-900/30 border border-green-800 text-green-200"
-              : "bg-red-900/30 border border-red-800 text-red-200"
-          }`}
-        >
+  return (
+    <div className="p-4">
+      <button
+        onClick={onBack}
+        className="flex items-center text-sm text-blue-500 hover:text-blue-700 mb-4"
+      >
+        <ArrowLeft className="w-4 h-4 mr-1" /> Back
+      </button>
+
+      <h2 className="text-xl font-bold mb-4">Transfer Token</h2>
+      
+      {transferStatus === 'success' ? (
+        <div className="text-center p-8 bg-green-50 rounded-lg">
+          <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-green-800 mb-2">Transfer Successful!</h3>
+          {transactionHash && (
+            <p className="text-sm text-gray-600 break-all">
+              Transaction: {transactionHash}
+            </p>
+          )}
+          <button
+            onClick={() => {
+              setTransferStatus('idle');
+              setAmount('');
+              setRecipientAddress('');
+            }}
+            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            New Transfer
+          </button>
+        </div>
+      ) : transferStatus === 'error' ? (
+        <div className="p-4 mb-4 text-red-700 bg-red-100 rounded">
           <div className="flex items-center">
-            {status?.type === "success" ? (
-              <CheckCircle className="w-5 h-5 mr-2" />
-            ) : (
-              <XCircle className="w-5 h-5 mr-2" />
-            )}
-            <span>{status?.message || dataError}</span>
+            <XCircle className="w-5 h-5 mr-2" />
+            <span>{error || 'Transaction failed'}</span>
           </div>
+          <button
+            onClick={() => setTransferStatus('idle')}
+            className="mt-2 text-sm text-blue-600 hover:underline"
+          >
+            Try again
+          </button>
         </div>
-      )}
-
-      {isLoadingData && (
-        <div className="flex justify-center py-8">
-          <Loader2 className="animate-spin h-8 w-8 text-blue-500" />
-          <span className="ml-2 text-gray-300">Loading data...</span>
-        </div>
-      )}
-
-      {!isLoadingData && transferType === "TOKEN_TRANSFER" ? (
-        <form onSubmit={handleTokenTransfer} className="space-y-4">
+      ) : (
+        <form onSubmit={handleTransfer} className="space-y-4">
           <div>
-            <label
-              htmlFor="network"
-              className="block text-sm font-medium text-gray-300 mb-1"
-            >
-              Network
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Select Token
             </label>
             <select
-              id="network"
-              value={selectedNetwork}
-              onChange={(e) => setSelectedNetwork(e.target.value)}
-              className="w-full bg-gray-800 border border-white/10 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
+              value={selectedToken?.address || ''}
+              onChange={(e) => {
+                const token = userTokens.find(t => t.address === e.target.value);
+                if (token) setSelectedToken(token);
+              }}
+              className="w-full p-2 border border-gray-300 rounded-md"
+              disabled={transferStatus !== 'idle'}
             >
-              <option value="">Select Network</option>
-              {networks.map((network) => (
-                <option key={network.caip_id} value={network.caip_id}>
-                  {network.network_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label
-              htmlFor="token"
-              className="block text-sm font-medium text-gray-300 mb-1"
-            >
-              Token
-            </label>
-            <select
-              id="token"
-              value={selectedToken}
-              onChange={(e) => setSelectedToken(e.target.value)}
-              className="w-full bg-gray-800 border border-white/10 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            >
-              <option value="">Select Token</option>
-              {tokens.map((token) => (
+              {availableTokens.map((token) => (
                 <option key={token.address} value={token.address}>
-                  {token.name} ({token.symbol})
+                  {token.symbol} ({formatBalance(token.balance, token.decimals)})
                 </option>
               ))}
             </select>
           </div>
 
           <div>
-            <label
-              htmlFor="recipient"
-              className="block text-sm font-medium text-gray-300 mb-1"
-            >
+            <div className="flex justify-between items-center mb-1">
+              <label className="block text-sm font-medium text-gray-700">
+                Amount
+              </label>
+              {selectedToken && (
+                <button
+                  type="button"
+                  onClick={handleMaxClick}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Max: {formatBalance(selectedToken.balance, selectedToken.decimals)}
+                </button>
+              )}
+            </div>
+            <input
+              type="number"
+              step="any"
+              min="0"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.0"
+              className="w-full p-2 border border-gray-300 rounded-md"
+              disabled={!selectedToken || transferStatus !== 'idle'}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
               Recipient Address
             </label>
             <input
               type="text"
-              id="recipient"
               value={recipientAddress}
-              onChange={(e) => setRecipientAddress(e.target.value)}
+              onChange={(e) => setRecipientAddress(e.target.value.trim())}
               placeholder="0x..."
-              className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
+              className="w-full p-2 border border-gray-300 rounded-md font-mono text-sm"
+              disabled={transferStatus !== 'idle'}
             />
           </div>
-
-          <div>
-            <label
-              htmlFor="amount"
-              className="block text-sm font-medium text-gray-300 mb-1"
+          
+          {error && (
+            <div className="p-2 text-sm text-red-600 bg-red-50 rounded">
+              {error}
+            </div>
+          )}
+          
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={!selectedToken || !amount || !recipientAddress || transferStatus === 'sending'}
+              className={`w-full flex justify-center items-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
+                !selectedToken || !amount || !recipientAddress || transferStatus === 'sending'
+                  ? 'bg-blue-400 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700'
+              }`}
             >
-              Amount
-            </label>
-            <input
-              type="text"
-              id="amount"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="0.0"
-              className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            />
+              {transferStatus === 'sending' ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Send className="w-4 h-4 mr-2" />
+                  Transfer
+                </>
+              )}
+            </button>
           </div>
-
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-4 rounded-md transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="animate-spin -ml-1 mr-2 h-4 w-4" />
-                Processing...
-              </>
-            ) : (
-              <>
-                <Send className="w-4 h-4 mr-2" />
-                Transfer Tokens
-              </>
-            )}
-          </button>
-        </form>
-      ) : (
-        <form onSubmit={handleRawTransaction} className="space-y-4">
-          <div>
-            <label
-              htmlFor="rawTxNetwork"
-              className="block text-sm font-medium text-gray-300 mb-1"
-            >
-              Network
-            </label>
-            <select
-              id="rawTxNetwork"
-              value={rawTxNetwork}
-              onChange={(e) => setRawTxNetwork(e.target.value)}
-              className="w-full bg-gray-800 border border-white/10 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            >
-              <option value="">Select Network</option>
-              {networks.map((network) => (
-                <option key={network.caip_id} value={network.caip_id}>
-                  {network.network_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label
-              htmlFor="fromAddress"
-              className="block text-sm font-medium text-gray-300 mb-1"
-            >
-              From Address
-            </label>
-            <select
-              id="fromAddress"
-              value={fromAddress}
-              onChange={(e) => setFromAddress(e.target.value)}
-              className="w-full bg-gray-800 border border-white/10 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            >
-              <option value="">Select Wallet</option>
-              {wallets.map((wallet) => (
-                <option key={wallet.address} value={wallet.address}>
-                  {wallet.address.slice(0, 6)}...{wallet.address.slice(-4)} (
-                  {wallet.network_name})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label
-              htmlFor="toAddress"
-              className="block text-sm font-medium text-gray-300 mb-1"
-            >
-              To Address
-            </label>
-            <input
-              type="text"
-              id="toAddress"
-              value={toAddress}
-              onChange={(e) => setToAddress(e.target.value)}
-              placeholder="0x..."
-              className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="value"
-              className="block text-sm font-medium text-gray-300 mb-1"
-            >
-              Value (in wei)
-            </label>
-            <input
-              type="text"
-              id="value"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder="0"
-              className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="data"
-              className="block text-sm font-medium text-gray-300 mb-1"
-            >
-              Data (hex)
-            </label>
-            <textarea
-              id="data"
-              value={data}
-              onChange={(e) => setData(e.target.value)}
-              placeholder="0x..."
-              rows={3}
-              className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-4 rounded-md transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="animate-spin -ml-1 mr-2 h-4 w-4" />
-                Processing...
-              </>
-            ) : (
-              <>
-                <FileText className="w-4 h-4 mr-2" />
-                Send Transaction
-              </>
-            )}
-          </button>
         </form>
       )}
     </div>
