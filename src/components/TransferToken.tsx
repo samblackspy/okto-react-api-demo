@@ -3,12 +3,12 @@ import {
   estimateTokenTransfer,
   Token,
   getSupportedTokens,
-  getPortfolioOverview,
+  getPortfolio,
   generateJobId,
   executeTransaction,
   EstimateResponse,
   ExecuteResponse,
-  PortfolioOverview
+  Portfolio
 } from "../services/oktoApi";
 import { Loader2, Send, CheckCircle, XCircle, ArrowLeft } from "lucide-react";
 
@@ -66,37 +66,33 @@ export function TransferToken({ token, onSuccess, onError, onBack }: TransferTok
         // Fetch all data in parallel
         const [tokensData, portfolioData] = await Promise.all([
           getSupportedTokens(token),
-          getPortfolioOverview(token),
+          getPortfolio(token),
         ]);
 
         // Process tokens from portfolio to get user's tokens with balances
         const tokensWithBalance: UserToken[] = [];
 
-        if ('group_tokens' in portfolioData) {
-          const portfolio = portfolioData as PortfolioOverview;
+        if ('assets' in portfolioData) {
+          const portfolio = portfolioData as Portfolio;
           
-          portfolio.group_tokens.forEach(group => {
-            group.tokens.forEach(token => {
-              if (parseFloat(token.balance) > 0) {
-                const tokenInfo = Array.isArray(tokensData) && 
-                  (tokensData as Token[]).find(t => 
-                    t.address?.toLowerCase() === token.token_address?.toLowerCase()
-                  );
+          // Process assets from the aggregated portfolio
+          portfolio.assets.forEach((asset: { symbol: string; balance: string; value_usd: number }) => {
+            const tokenInfo = Array.isArray(tokensData) && 
+              (tokensData as Token[]).find(t => 
+                t.symbol === asset.symbol
+              );
 
-                if (tokenInfo) {
-                  tokensWithBalance.push({
-                    ...tokenInfo,
-                    balance: token.balance,
-                    network_name: token.network_name,
-                    network_id: token.network_id,
-                    decimals: parseInt(token.precision) || 18,
-                  });
-                }
-              }
-            });
+            if (tokenInfo) {
+              tokensWithBalance.push({
+                ...tokenInfo,
+                balance: asset.balance,
+                network_name: tokenInfo.network_name || 'ethereum',
+                network_id: '1',
+                decimals: 18,
+              });
+            }
           });
         }
-
 
         setUserTokens(tokensWithBalance);
 
