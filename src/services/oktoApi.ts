@@ -55,10 +55,30 @@ export interface Activity {
   timestamp: number;
 }
 export interface Order {
-  id: string;
+  downstream_transaction_hash: string[];
+  transaction_hash: string[];
   status: string;
-  amount: string;
-  created_at: string;
+  intent_id: string;
+  intent_type: string;
+  network_name: string;
+  caip_id: string;
+  details: {
+    amount: string;
+    caip2id: string;
+    recipientWalletAddress: string;
+    tokenAddress: string;
+  };
+  reason: string;
+  block_timestamp: number;
+}
+
+// This response type is updated to expect the `items` array
+export interface OrdersResponse {
+  status: "success",
+  data: {
+    count: number;
+    items: Order[];
+  }
 }
 export interface SessionInfo {
   is_valid: boolean;
@@ -118,10 +138,7 @@ export interface ActivityResponse {
   status: "success";
   data: Activity[];
 }
-export interface OrdersResponse {
-  status: "success";
-  data: Order[];
-}
+ 
 export interface SessionInfoResponse {
   status: "success";
   data: SessionInfo;

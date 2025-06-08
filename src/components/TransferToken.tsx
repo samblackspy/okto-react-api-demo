@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { ArrowLeft, CheckCircle } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle,
+  RefreshCw,
+  Copy as CopyIcon,
+} from "lucide-react";
 import {
   getPortfolioOverview,
   getSupportedNetworks,
@@ -7,11 +12,35 @@ import {
   signUserOp,
   executeTransaction as executeTransactionApi,
   generatePaymasterData,
+  getOrdersHistory,
   PortfolioToken,
   OktoErrorResponse,
   PortfolioResponse,
   NetworksResponse,
+  Order,
 } from "../services/oktoApi";
+
+// Helper component for the copy button
+const CopyButton = ({ textToCopy }: { textToCopy: string }) => {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(textToCopy);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="p-1 hover:bg-gray-200 rounded-md transition-colors"
+    >
+      {copied ? (
+        <CheckCircle className="w-4 h-4 text-green-500" />
+      ) : (
+        <CopyIcon className="w-4 h-4 text-gray-500" />
+      )}
+    </button>
+  );
+};
 
 interface TransferTokenProps {
   token: string;
@@ -38,20 +67,30 @@ const TransferToken: React.FC<TransferTokenProps> = ({
   onError = () => {},
   onBack,
 }) => {
+  // State for UI and data
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<ErrorDetails | null>(null);
   const [transferStatus, setTransferStatus] = useState<"idle" | "success">(
     "idle"
   );
+
+  // State for form inputs
   const [tokens, setTokens] = useState<TokenWithBalance[]>([]);
   const [selectedToken, setSelectedToken] = useState<TokenWithBalance | null>(
     null
   );
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
-  const [transactionHash, setTransactionHash] = useState("");
+
+  // State for transaction results
   const [jobId, setJobId] = useState("");
+  const [transactionHash, setTransactionHash] = useState("");
+
+  // State for the status checking feature
+  const [orderHistory, setOrderHistory] = useState<Order | null>(null);
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+  const [showStatusModal, setShowStatusModal] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -117,10 +156,8 @@ const TransferToken: React.FC<TransferTokenProps> = ({
       });
       return;
     }
-
     setIsSubmitting(true);
     setError(null);
-
     try {
       let tokenDecimals;
       if (
@@ -171,7 +208,6 @@ const TransferToken: React.FC<TransferTokenProps> = ({
         authToken,
         signedUserOp
       );
-
       if (executeResponse.status === "error") {
         const apiError = (executeResponse as OktoErrorResponse).error;
         throw new Error(
@@ -199,44 +235,157 @@ const TransferToken: React.FC<TransferTokenProps> = ({
     if (selectedToken) setAmount(selectedToken.balance);
   }, [selectedToken]);
 
-  if (isLoading)
-    return <div className="p-8 text-center">Loading wallet...</div>;
+  const handleCheckStatus = async (currentJobId: string) => {
+    setIsCheckingStatus(true);
+    setError(null);
+    try {
+      const response = await getOrdersHistory(authToken);
+      if (response.status === "success") {
+        const historyItem = response.data.items.find(
+          (item) => item.intent_id === currentJobId
+        );
+        setOrderHistory(historyItem || null);
+      } else {
+        throw new Error(response.message);
+      }
+    } catch (err) {
+      setError({ message: (err as Error).message });
+    } finally {
+      setIsCheckingStatus(false);
+      setShowStatusModal(true);
+    }
+  };
+
+  const resetForm = () => {
+    setTransferStatus("idle");
+    setJobId("");
+    setTransactionHash("");
+    setOrderHistory(null);
+    setShowStatusModal(false);
+    setAmount("");
+    setRecipient("");
+    setError(null);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="p-8 text-center text-gray-500">Loading wallet...</div>
+    );
+  }
+
+  if (showStatusModal) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="max-w-md w-full bg-white rounded-lg shadow-xl p-6">
+          <h3 className="text-lg font-semibold mb-4 text-gray-800">
+            Transaction Status
+          </h3>
+          {error && (
+            <p className="text-sm text-red-500 bg-red-50 p-2 rounded-md mb-4">
+              {error.message}
+            </p>
+          )}
+
+          {orderHistory ? (
+            <div className="space-y-3 text-sm bg-gray-50 p-4 rounded-lg">
+              <div className="flex justify-between">
+                <span className="text-gray-500">Job ID:</span>{" "}
+                <span className="font-mono text-gray-700">
+                  {orderHistory.intent_id}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500">Status:</span>{" "}
+                <span className="font-semibold px-2 py-1 rounded-full bg-blue-100 text-blue-800">
+                  {orderHistory.status}
+                </span>
+              </div>
+              {orderHistory.reason && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Reason:</span>{" "}
+                  <span className="text-red-600">{orderHistory.reason}</span>
+                </div>
+              )}
+              {orderHistory.transaction_hash &&
+                orderHistory.transaction_hash[0] && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500">Tx Hash:</span>{" "}
+                    <a
+                      href={`https://polygonscan.com/tx/${orderHistory.transaction_hash[0]}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 font-mono truncate hover:underline"
+                    >
+                      {orderHistory.transaction_hash[0].slice(0, 20)}...
+                    </a>
+                  </div>
+                )}
+            </div>
+          ) : (
+            <p className="text-gray-600 text-center my-4">
+              Could not find status details for this Job ID.
+            </p>
+          )}
+
+          <div className="mt-6 flex flex-col gap-3">
+            <button
+              onClick={() => handleCheckStatus(jobId)}
+              disabled={isCheckingStatus}
+              className="w-full py-2 px-4 flex items-center justify-center gap-2 border border-gray-300 text-gray-700 font-medium rounded-md hover:bg-gray-50 disabled:bg-gray-100 transition-colors"
+            >
+              <RefreshCw
+                className={`w-4 h-4 ${isCheckingStatus ? "animate-spin" : ""}`}
+              />
+              {isCheckingStatus ? "Refreshing..." : "Refresh"}
+            </button>
+            <button
+              onClick={resetForm}
+              className="w-full py-2 px-4 bg-gray-600 text-white font-medium rounded-md hover:bg-gray-700 transition-colors"
+            >
+              New Transfer
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (transferStatus === "success") {
     return (
       <div className="max-w-md mx-auto p-6 bg-white rounded-lg shadow-md text-center">
         <CheckCircle className="h-16 w-16 text-green-500 mx-auto mb-4" />
-        <h3 className="text-xl font-semibold mb-2">Transfer Successful!</h3>
+        <h3 className="text-xl font-semibold mb-2">Transfer Submitted!</h3>
         <p className="text-gray-600 mb-4">
-          Your transaction has been submitted.
+          Your transaction is being processed by the network.
         </p>
 
         {jobId && (
-          <div className="mt-4 p-3 bg-gray-50 rounded-md text-sm break-all">
-            <span className="font-medium">Job ID:</span>{" "}
-            <span className="font-mono">{jobId}</span>
+          <div className="mt-4 p-3 bg-gray-50 rounded-md text-sm text-left flex justify-between items-center">
+            <div>
+              <span className="font-medium">Job ID:</span>
+              <p className="font-mono text-xs text-gray-700 break-all">
+                {jobId}
+              </p>
+            </div>
+            <CopyButton textToCopy={jobId} />
           </div>
         )}
 
-        {transactionHash && (
-          <div className="mt-2 p-3 bg-gray-50 rounded-md text-sm break-all">
-            <span className="font-medium">Tx Hash:</span>{" "}
-            <a
-              href={`https://polygonscan.com/tx/${transactionHash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
-            >
-              {transactionHash}
-            </a>
-          </div>
-        )}
-        <button
-          onClick={onBack}
-          className="mt-6 w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700"
-        >
-          Done
-        </button>
+        <div className="mt-6 flex flex-col sm:flex-row gap-3">
+          <button
+            onClick={onBack}
+            className="w-full py-2 px-4 border border-gray-300 text-gray-700 font-medium rounded-md hover:bg-gray-50 transition-colors"
+          >
+            Back to Dashboard
+          </button>
+          <button
+            onClick={() => handleCheckStatus(jobId)}
+            disabled={isCheckingStatus}
+            className="w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
+          >
+            {isCheckingStatus ? "Checking..." : "Check Status"}
+          </button>
+        </div>
       </div>
     );
   }
