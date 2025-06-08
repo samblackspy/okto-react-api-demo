@@ -25,8 +25,9 @@ import {
   Activity,
   Image,
   History,
-  Shield,
+  Lock,
   Zap,
+  Shield,
   Send,
   FileText,
 } from "lucide-react";
@@ -49,35 +50,71 @@ export function Dashboard({ token, handleLogout }: DashboardProps) {
 
   useEffect(() => {
     const fetchStats = async () => {
-      try {
-        const [portfolioRes, walletsRes, nftsRes, activityRes] =
-          await Promise.all([
-            getPortfolioOverview(token),
-            getWallets(token),
-            getPortfolioNFTs(token),
-            getPortfolioActivity(token),
-          ]);
+      const results = await Promise.allSettled([
+        getPortfolioOverview(token),
+        getWallets(token),
+        getPortfolioNFTs(token),
+        getPortfolioActivity(token),
+      ]);
 
-        if (portfolioRes.status === "success") {
-          const usdtValue =
-            portfolioRes.data.aggregated_data.total_holding_price_usdt || "0";
-          setPortfolioValue(`$${parseFloat(usdtValue).toFixed(2)}`);
-        }
-        if (walletsRes.status === "success") {
-          setWalletCount(walletsRes.data.length.toString());
-        }
-        if (nftsRes.status === "success") {
-          setNftCount(nftsRes.data.length.toString());
-        }
-        if (activityRes.status === "success") {
-          setActivityCount(activityRes.data.length.toString());
-        }
-      } catch (error) {
-        console.error("Failed to fetch initial stats:", error);
-        setPortfolioValue("$0.00");
-        setWalletCount("0");
+      const [portfolioRes, walletsRes, nftsRes, activityRes] = results;
+
+      if (
+        portfolioRes.status === "fulfilled" &&
+        portfolioRes.value.status === "success"
+      ) {
+        const usdtValue =
+          portfolioRes.value.data.aggregated_data.total_holding_price_usdt ||
+          "0";
+        setPortfolioValue(`$${parseFloat(usdtValue).toFixed(2)}`);
+      } else {
+        console.error(
+          "Failed to fetch portfolio:",
+          portfolioRes.status === "rejected"
+            ? portfolioRes.reason
+            : portfolioRes.value
+        );
+      }
+
+      if (
+        walletsRes.status === "fulfilled" &&
+        walletsRes.value.status === "success"
+      ) {
+        setWalletCount(walletsRes.value.data.length.toString());
+      } else {
+        console.error(
+          "Failed to fetch wallets:",
+          walletsRes.status === "rejected"
+            ? walletsRes.reason
+            : walletsRes.value
+        );
+      }
+
+      if (
+        nftsRes.status === "fulfilled" &&
+        nftsRes.value.status === "success"
+      ) {
+        setNftCount(nftsRes.value.data.length.toString());
+      } else {
+        console.error(
+          "Failed to fetch NFTs:",
+          nftsRes.status === "rejected" ? nftsRes.reason : nftsRes.value
+        );
         setNftCount("0");
-        setActivityCount("0");
+      }
+
+      if (
+        activityRes.status === "fulfilled" &&
+        activityRes.value.status === "success"
+      ) {
+        setActivityCount(activityRes.value.data.length.toString());
+      } else {
+        console.error(
+          "Failed to fetch activity:",
+          activityRes.status === "rejected"
+            ? activityRes.reason
+            : activityRes.value
+        );
       }
     };
 
@@ -222,6 +259,7 @@ export function Dashboard({ token, handleLogout }: DashboardProps) {
               />
             </div>
           </div>
+
           <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-6">
             <h2 className="text-xl font-semibold text-white mb-6 flex items-center">
               <TrendingUp className="w-5 h-5 mr-2 text-blue-400" /> Portfolio
@@ -259,6 +297,7 @@ export function Dashboard({ token, handleLogout }: DashboardProps) {
             </div>
           </div>
         </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div className="lg:col-start-1 lg:col-end-3 bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-6">
             <h2 className="text-xl font-semibold text-white mb-6 flex items-center">
