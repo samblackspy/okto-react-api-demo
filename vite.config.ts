@@ -8,7 +8,6 @@ export default defineConfig(({ mode }) => {
   
   return {
     plugins: [react()],
-    // Use relative paths for assets in production, absolute in development
     base: isProduction ? './' : '/',
     
     optimizeDeps: {

@@ -1,378 +1,377 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import { ArrowLeft, CheckCircle } from "lucide-react";
 import {
-  estimateTokenTransfer,
-  Token,
-  getSupportedTokens,
-  generateJobId,
-  executeTransaction,
-  EstimateResponse,
-  ExecuteResponse,
+  getPortfolioOverview,
+  getSupportedNetworks,
+  estimateTokenTransfer as estimateTokenTransferApi,
+  signUserOp,
+  executeTransaction as executeTransactionApi,
+  generatePaymasterData,
+  PortfolioToken,
+  OktoErrorResponse,
+  PortfolioResponse,
+  NetworksResponse,
 } from "../services/oktoApi";
-import { Loader2, Send, CheckCircle, XCircle, ArrowLeft } from "lucide-react";
-
-interface PortfolioToken {
-  id: string;
-  name: string;
-  symbol: string;
-  short_name: string;
-  token_image: string;
-  token_address: string;
-  network_id: string;
-  precision: string;
-  network_name: string;
-  is_primary: boolean;
-  balance: string;
-  holdings_price_usdt: string;
-  holdings_price_inr: string;
-}
-
-interface PortfolioGroup {
-  id: string;
-  tokens: PortfolioToken[];
-  [key: string]: any;
-}
-
-const API_BASE_URL = "https://sandbox-api.okto.tech/api/oc/v1";
-
-type TransferStatus = 'idle' | 'estimating' | 'sending' | 'success' | 'error';
-
-interface UserToken extends Token {
-  balance: string;
-  network_name: string;
-  network_id: string;
-  decimals: number;
-}
 
 interface TransferTokenProps {
   token: string;
-  onSuccess?: (result: unknown) => void;
-  onError?: (error: unknown) => void;
+  sessionKey: string;
+  onSuccess?: (jobId: string) => void;
+  onError?: (error: Error) => void;
   onBack: () => void;
 }
 
-const formatBalance = (balance: string, decimals: number = 18): string => {
-  try {
-    const num = parseFloat(balance) / Math.pow(10, decimals);
-    return num.toLocaleString(undefined, {
-      minimumFractionDigits: 4,
-      maximumFractionDigits: 4,
-    });
-  } catch (error) {
-    console.error('Error formatting balance:', error);
-    return '0';
-  }
-};
+interface ErrorDetails {
+  message: string;
+  details?: any;
+}
 
-export function TransferToken({ token, onSuccess, onError, onBack }: TransferTokenProps) {
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [transferStatus, setTransferStatus] = useState<TransferStatus>('idle');
-  const [amount, setAmount] = useState<string>('');
-  const [recipientAddress, setRecipientAddress] = useState<string>('');
-  const [transactionHash, setTransactionHash] = useState<string>('');
-  const [userTokens, setUserTokens] = useState<UserToken[]>([]);
-  const [selectedToken, setSelectedToken] = useState<UserToken | null>(null);
+interface TokenWithBalance extends PortfolioToken {
+  caip2_id: string;
+  chain_id: number;
+}
 
-  // Filtered tokens that the user actually has a balance for
-  const availableTokens = useMemo(() => {
-    return userTokens.filter(t => parseFloat(t.balance) > 0);
-  }, [userTokens]);
+const TransferToken: React.FC<TransferTokenProps> = ({
+  token: authToken,
+  sessionKey,
+  onSuccess = () => {},
+  onError = () => {},
+  onBack,
+}) => {
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<ErrorDetails | null>(null);
+  const [transferStatus, setTransferStatus] = useState<"idle" | "success">(
+    "idle"
+  );
+  const [tokens, setTokens] = useState<TokenWithBalance[]>([]);
+  const [selectedToken, setSelectedToken] = useState<TokenWithBalance | null>(
+    null
+  );
+  const [amount, setAmount] = useState("");
+  const [recipient, setRecipient] = useState("");
+  const [transactionHash, setTransactionHash] = useState("");
+  const [jobId, setJobId] = useState("");
 
-  // Fetch all necessary data on component mount
   useEffect(() => {
     const fetchData = async () => {
+      setIsLoading(true);
+      setError(null);
       try {
-        setIsLoading(true);
-        setError(null);
-
-        // Fetch all data in parallel
-        const [tokensData, portfolioData] = await Promise.all([
-          getSupportedTokens(token),
-          fetch(`${API_BASE_URL}/portfolio/overview`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }).then(res => res.json()),
+        const [portfolioRes, networksRes] = await Promise.all([
+          getPortfolioOverview(authToken),
+          getSupportedNetworks(authToken),
         ]);
+        if (portfolioRes.status === "error")
+          throw new Error(portfolioRes.message);
+        if (networksRes.status === "error")
+          throw new Error(networksRes.message);
 
-        // Process tokens from portfolio to get user's tokens with balances
-        const tokensWithBalance: UserToken[] = [];
+        const portfolio = (portfolioRes as PortfolioResponse).data;
+        const networks = (networksRes as NetworksResponse).data.network;
+        const networkMap = new Map(networks.map((n) => [n.network_id, n]));
 
-        if (portfolioData?.group_tokens) {
-          (portfolioData.group_tokens as PortfolioGroup[]).forEach((group: PortfolioGroup) => {
-            group.tokens.forEach((token: PortfolioToken) => {
-              if (parseFloat(token.balance) > 0) {
-                const tokenInfo = Array.isArray(tokensData) && 
-                  (tokensData as Token[]).find(t => 
-                    t.address?.toLowerCase() === token.token_address?.toLowerCase()
-                  );
+        const transformedTokens = portfolio.group_tokens
+          .flatMap((group) => group.tokens)
+          .map((token) => {
+            const network = networkMap.get(token.network_id);
+            if (!network) return null;
+            return {
+              ...token,
+              id: `${token.network_id}-${token.token_address || "native"}`,
+              caip2_id: network.caip_id,
+              chain_id: parseInt(network.chain_id, 10),
+            };
+          })
+          .filter(
+            (token): token is TokenWithBalance =>
+              token !== null && parseFloat(token.balance) > 0
+          );
 
-                if (tokenInfo) {
-                  tokensWithBalance.push({
-                    ...tokenInfo,
-                    balance: token.balance,
-                    network_name: token.network_name,
-                    network_id: token.network_id,
-                    decimals: parseInt(token.precision) || 18,
-                  });
-                }
-              }
-            });
-          });
-        }
-
-        setUserTokens(tokensWithBalance);
-
-        // Set the first available token as selected if any
-        if (tokensWithBalance.length > 0) {
-          setSelectedToken(tokensWithBalance[0]);
-        }
+        setTokens(transformedTokens);
+        if (transformedTokens.length > 0)
+          setSelectedToken(transformedTokens[0]);
       } catch (err) {
-        console.error('Error fetching data:', err);
-        const errorMessage = err instanceof Error ? err.message : 'Failed to load data';
-        setError(errorMessage);
-        onError?.(err);
+        setError({ message: (err as Error).message });
       } finally {
         setIsLoading(false);
       }
     };
-
     fetchData();
-  }, [token, onError]);
+  }, [authToken]);
+
+  const parseAmountToWei = (value: string, decimals: number): string => {
+    if (!value) return "0";
+    const [whole, fraction = ""] = value.replace(/,/g, "").trim().split(".");
+    return BigInt(
+      whole + fraction.padEnd(decimals, "0").slice(0, decimals)
+    ).toString();
+  };
 
   const handleTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!selectedToken || !amount || !recipientAddress) {
-      setError('Please fill in all fields');
+    if (!selectedToken || !amount || !recipient || !sessionKey) {
+      setError({
+        message:
+          "Please fill all fields and ensure you are logged in correctly.",
+      });
       return;
     }
 
+    setIsSubmitting(true);
+    setError(null);
+
     try {
-      setTransferStatus('estimating');
-      setError(null);
+      let tokenDecimals;
+      if (
+        selectedToken.is_primary &&
+        selectedToken.caip2_id.startsWith("eip155")
+      ) {
+        tokenDecimals = 18;
+      } else {
+        tokenDecimals = parseInt(selectedToken.precision, 10);
+      }
+      if (isNaN(tokenDecimals))
+        throw new Error("Could not determine token precision.");
 
-      // Generate a job ID for this transaction
-      const jobId = generateJobId();
-
-      // Estimate the transaction
-      const estimate = await estimateTokenTransfer(
-        token,
-        jobId,
-        recipientAddress,
-        selectedToken.network_id,
-        selectedToken.address,
-        amount,
-        '0', // maxFeePerGas - will be set by the API
-        '0', // maxPriorityFeePerGas - will be set by the API
-        '' // paymasterData - can be empty for now
+      const amountInWei = parseAmountToWei(amount, tokenDecimals);
+      const newJobId = crypto.randomUUID();
+      const paymasterData = await generatePaymasterData(
+        import.meta.env.VITE_OKTO_CLIENT_SWA,
+        import.meta.env.VITE_OKTO_CLIENT_PRIVATE_KEY,
+        newJobId,
+        Math.floor(Date.now() / 1000) + 3600
       );
 
-      if ('error' in estimate) {
-        const errorMessage = typeof estimate.error === 'string' 
-          ? estimate.error 
-          : estimate.error?.message || 'Failed to estimate transaction';
-        throw new Error(errorMessage);
+      const estimateResponse = await estimateTokenTransferApi(
+        authToken,
+        newJobId,
+        recipient,
+        selectedToken.caip2_id,
+        selectedToken.is_primary ? "" : selectedToken.token_address,
+        amountInWei,
+        paymasterData
+      );
+      if (estimateResponse.status === "error" || !estimateResponse.data) {
+        const apiError = (estimateResponse as OktoErrorResponse).error;
+        throw new Error(
+          apiError?.details ||
+            apiError?.message ||
+            "Failed to estimate transaction."
+        );
       }
 
-      setTransferStatus('sending');
-
-      // Execute the transaction
-      const result = await executeTransaction(
-        token,
-        (estimate as EstimateResponse).data.userOps
+      const unsignedUserOp = estimateResponse.data.userOps;
+      const signedUserOp = await signUserOp(
+        unsignedUserOp,
+        sessionKey,
+        selectedToken.chain_id
+      );
+      const executeResponse = await executeTransactionApi(
+        authToken,
+        signedUserOp
       );
 
-      if ('error' in result) {
-        const errorMessage = typeof result.error === 'string'
-          ? result.error
-          : result.error?.message || 'Transaction failed';
-        throw new Error(errorMessage);
+      if (executeResponse.status === "error") {
+        const apiError = (executeResponse as OktoErrorResponse).error;
+        throw new Error(
+          apiError?.details ||
+            apiError?.message ||
+            "Failed to execute transaction."
+        );
       }
 
-      setTransactionHash((result as ExecuteResponse).data.transactionHash || '');
-      setTransferStatus('success');
-      onSuccess?.(result);
-
+      const successData = executeResponse.data;
+      setJobId(successData.jobId);
+      setTransactionHash(successData.transactionHash || "");
+      setTransferStatus("success");
+      onSuccess(successData.jobId);
     } catch (err) {
-      console.error('Transfer error:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Transaction failed';
-      setError(errorMessage);
-      setTransferStatus('error');
-      onError?.(err);
+      const error = err as Error;
+      setError({ message: error.message });
+      onError(error);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleMaxClick = () => {
-    if (selectedToken) {
-      // Convert balance from wei/smallest unit to token units
-      const balance = parseFloat(selectedToken.balance) / Math.pow(10, selectedToken.decimals || 18);
-      setAmount(balance.toString());
-    }
-  };
-  
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-        <span className="ml-2">Loading tokens...</span>
-      </div>
-    );
-  }
+  const handleMaxClick = useCallback(() => {
+    if (selectedToken) setAmount(selectedToken.balance);
+  }, [selectedToken]);
 
-  if (availableTokens.length === 0) {
+  if (isLoading)
+    return <div className="p-8 text-center">Loading wallet...</div>;
+
+  if (transferStatus === "success") {
     return (
-      <div className="p-4">
+      <div className="max-w-md mx-auto p-6 bg-white rounded-lg shadow-md text-center">
+        <CheckCircle className="h-16 w-16 text-green-500 mx-auto mb-4" />
+        <h3 className="text-xl font-semibold mb-2">Transfer Successful!</h3>
+        <p className="text-gray-600 mb-4">
+          Your transaction has been submitted.
+        </p>
+
+        {jobId && (
+          <div className="mt-4 p-3 bg-gray-50 rounded-md text-sm break-all">
+            <span className="font-medium">Job ID:</span>{" "}
+            <span className="font-mono">{jobId}</span>
+          </div>
+        )}
+
+        {transactionHash && (
+          <div className="mt-2 p-3 bg-gray-50 rounded-md text-sm break-all">
+            <span className="font-medium">Tx Hash:</span>{" "}
+            <a
+              href={`https://polygonscan.com/tx/${transactionHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline"
+            >
+              {transactionHash}
+            </a>
+          </div>
+        )}
         <button
           onClick={onBack}
-          className="flex items-center text-sm text-blue-500 hover:text-blue-700 mb-4"
+          className="mt-6 w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700"
         >
-          <ArrowLeft className="w-4 h-4 mr-1" /> Back
+          Done
         </button>
-        <div className="text-center p-8 bg-gray-50 rounded-lg">
-          <p className="text-gray-600">No tokens available for transfer</p>
-        </div>
       </div>
     );
   }
 
   return (
-    <div className="p-4">
-      <button
-        onClick={onBack}
-        className="flex items-center text-sm text-blue-500 hover:text-blue-700 mb-4"
-      >
-        <ArrowLeft className="w-4 h-4 mr-1" /> Back
-      </button>
+    <div className="max-w-md mx-auto p-6 bg-white rounded-lg shadow-md">
+      <div className="flex items-center mb-6">
+        <button
+          onClick={onBack}
+          className="mr-4 p-1 rounded-full hover:bg-gray-100"
+        >
+          <ArrowLeft className="h-5 w-5 text-gray-600" />
+        </button>
+        <h2 className="text-xl font-semibold">Transfer Token</h2>
+      </div>
 
-      <h2 className="text-xl font-bold mb-4">Transfer Token</h2>
-      
-      {transferStatus === 'success' ? (
-        <div className="text-center p-8 bg-green-50 rounded-lg">
-          <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-green-800 mb-2">Transfer Successful!</h3>
-          {transactionHash && (
-            <p className="text-sm text-gray-600 break-all">
-              Transaction: {transactionHash}
-            </p>
-          )}
-          <button
-            onClick={() => {
-              setTransferStatus('idle');
-              setAmount('');
-              setRecipientAddress('');
-            }}
-            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-          >
-            New Transfer
-          </button>
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 text-red-800 rounded-md text-sm">
+          <p className="font-bold">Error</p>
+          <p>{error.message}</p>
         </div>
-      ) : transferStatus === 'error' ? (
-        <div className="p-4 mb-4 text-red-700 bg-red-100 rounded">
-          <div className="flex items-center">
-            <XCircle className="w-5 h-5 mr-2" />
-            <span>{error || 'Transaction failed'}</span>
-          </div>
-          <button
-            onClick={() => setTransferStatus('idle')}
-            className="mt-2 text-sm text-blue-600 hover:underline"
+      )}
+
+      <form onSubmit={handleTransfer} className="space-y-5">
+        <div>
+          <label
+            htmlFor="network"
+            className="block text-sm font-medium text-gray-700 mb-1"
           >
-            Try again
-          </button>
-        </div>
-      ) : (
-        <form onSubmit={handleTransfer} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Select Token
-            </label>
-            <select
-              value={selectedToken?.address || ''}
-              onChange={(e) => {
-                const token = userTokens.find(t => t.address === e.target.value);
-                if (token) setSelectedToken(token);
-              }}
-              className="w-full p-2 border border-gray-300 rounded-md"
-              disabled={transferStatus !== 'idle'}
-            >
-              {availableTokens.map((token) => (
-                <option key={token.address} value={token.address}>
-                  {token.symbol} ({formatBalance(token.balance, token.decimals)})
+            Network
+          </label>
+          <select
+            id="network"
+            value={selectedToken?.network_id || ""}
+            onChange={(e) =>
+              setSelectedToken(
+                tokens.find((t) => t.network_id === e.target.value) || null
+              )
+            }
+            className="w-full p-2 border border-gray-300 rounded-md mb-4"
+          >
+            {[...new Map(tokens.map((t) => [t.network_id, t])).values()].map(
+              (t) => (
+                <option key={t.network_id} value={t.network_id}>
+                  {t.network_name}
+                </option>
+              )
+            )}
+          </select>
+
+          <label
+            htmlFor="token"
+            className="block text-sm font-medium text-gray-700 mb-1"
+          >
+            Token
+          </label>
+          <select
+            id="token"
+            value={selectedToken?.id || ""}
+            onChange={(e) =>
+              setSelectedToken(
+                tokens.find((t) => t.id === e.target.value) || null
+              )
+            }
+            className="w-full p-2 border border-gray-300 rounded-md"
+            disabled={!selectedToken}
+          >
+            {tokens
+              .filter((t) => t.network_id === selectedToken?.network_id)
+              .map((token) => (
+                <option key={token.id} value={token.id}>
+                  {token.name} ({token.symbol})
                 </option>
               ))}
-            </select>
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="block text-sm font-medium text-gray-700">
-                Amount
-              </label>
-              {selectedToken && (
-                <button
-                  type="button"
-                  onClick={handleMaxClick}
-                  className="text-xs text-blue-600 hover:text-blue-800"
-                >
-                  Max: {formatBalance(selectedToken.balance, selectedToken.decimals)}
-                </button>
-              )}
-            </div>
+          </select>
+        </div>
+        <div>
+          <label
+            htmlFor="amount"
+            className="block text-sm font-medium text-gray-700 mb-1"
+          >
+            Amount
+          </label>
+          <div className="relative">
             <input
-              type="number"
-              step="any"
-              min="0"
+              type="text"
+              id="amount"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.0"
-              className="w-full p-2 border border-gray-300 rounded-md"
-              disabled={!selectedToken || transferStatus !== 'idle'}
+              className="w-full p-2 pr-16 border border-gray-300 rounded-md"
+              disabled={!selectedToken}
             />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Recipient Address
-            </label>
-            <input
-              type="text"
-              value={recipientAddress}
-              onChange={(e) => setRecipientAddress(e.target.value.trim())}
-              placeholder="0x..."
-              className="w-full p-2 border border-gray-300 rounded-md font-mono text-sm"
-              disabled={transferStatus !== 'idle'}
-            />
-          </div>
-          
-          {error && (
-            <div className="p-2 text-sm text-red-600 bg-red-50 rounded">
-              {error}
-            </div>
-          )}
-          
-          <div className="pt-2">
             <button
-              type="submit"
-              disabled={!selectedToken || !amount || !recipientAddress || transferStatus === 'sending'}
-              className={`w-full flex justify-center items-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
-                !selectedToken || !amount || !recipientAddress || transferStatus === 'sending'
-                  ? 'bg-blue-400 cursor-not-allowed'
-                  : 'bg-blue-600 hover:bg-blue-700'
-              }`}
+              type="button"
+              onClick={handleMaxClick}
+              className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded"
+              disabled={!selectedToken}
             >
-              {transferStatus === 'sending' ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Sending...
-                </>
-              ) : (
-                <>
-                  <Send className="w-4 h-4 mr-2" />
-                  Transfer
-                </>
-              )}
+              MAX
             </button>
           </div>
-        </form>
-      )}
+          {selectedToken && (
+            <p className="mt-1 text-xs text-gray-500">
+              Balance: {parseFloat(selectedToken.balance).toFixed(6)}{" "}
+              {selectedToken.symbol}
+            </p>
+          )}
+        </div>
+        <div>
+          <label
+            htmlFor="recipient"
+            className="block text-sm font-medium text-gray-700 mb-1"
+          >
+            Recipient Address
+          </label>
+          <input
+            type="text"
+            id="recipient"
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            placeholder="0x..."
+            className="w-full p-2 border border-gray-300 rounded-md font-mono text-sm"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={isSubmitting || !selectedToken || !amount || !recipient}
+          className="w-full py-2.5 px-4 rounded-md text-white font-semibold disabled:bg-blue-300 bg-blue-600 hover:bg-blue-700"
+        >
+          {isSubmitting ? "Processing..." : "Review Transfer"}
+        </button>
+      </form>
     </div>
   );
-}
+};
+
+export default TransferToken;

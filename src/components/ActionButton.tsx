@@ -1,4 +1,3 @@
-
 type ActionButtonProps = {
   title: string;
   apiFn: () => Promise<any>;
@@ -6,7 +5,12 @@ type ActionButtonProps = {
   setIsLoading: (isLoading: boolean) => void;
 };
 
-export function ActionButton({ title, apiFn, setApiResult, setIsLoading }: ActionButtonProps) {
+export function ActionButton({
+  title,
+  apiFn,
+  setApiResult,
+  setIsLoading,
+}: ActionButtonProps) {
   const handleClick = async () => {
     setIsLoading(true);
     setApiResult(null);

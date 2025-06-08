@@ -3,22 +3,15 @@ import {
   getWallets,
   getSupportedNetworks,
   getSupportedTokens,
-  getPortfolio,
+  getPortfolioOverview,
   getPortfolioActivity,
-  getPortfolioNFT,
+  getPortfolioNFTs,
   getOrdersHistory,
   verifySession,
 } from "../services/oktoApi";
-
-interface PortfolioData {
-  aggregated_data: {
-    total_holding_price_usdt: string;
-  };
-}
 import { StatsCard } from "./StatsCard";
 import { ApiButton } from "./ApiButton";
 import { ResultModal, type ApiResult } from "./ResultModal";
-
 import {
   LogOut,
   Wallet as WalletIcon,
@@ -32,9 +25,8 @@ import {
   Activity,
   Image,
   History,
-  Lock,
-  Zap,
   Shield,
+  Zap,
   Send,
   FileText,
 } from "lucide-react";
@@ -58,32 +50,27 @@ export function Dashboard({ token, handleLogout }: DashboardProps) {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const [portfolioData, walletData, nftData, activityData] =
+        const [portfolioRes, walletsRes, nftsRes, activityRes] =
           await Promise.all([
-            getPortfolio(token),
+            getPortfolioOverview(token),
             getWallets(token),
-            getPortfolioNFT(token),
+            getPortfolioNFTs(token),
             getPortfolioActivity(token),
           ]);
 
-        if (
-          portfolioData &&
-          !("error" in portfolioData) &&
-          "aggregated_data" in portfolioData
-        ) {
-          const portfolio = portfolioData as PortfolioData;
+        if (portfolioRes.status === "success") {
           const usdtValue =
-            portfolio.aggregated_data.total_holding_price_usdt || "0";
+            portfolioRes.data.aggregated_data.total_holding_price_usdt || "0";
           setPortfolioValue(`$${parseFloat(usdtValue).toFixed(2)}`);
         }
-        if (Array.isArray(walletData)) {
-          setWalletCount(walletData.length.toString());
+        if (walletsRes.status === "success") {
+          setWalletCount(walletsRes.data.length.toString());
         }
-        if (Array.isArray(nftData)) {
-          setNftCount(nftData.length.toString());
+        if (nftsRes.status === "success") {
+          setNftCount(nftsRes.data.length.toString());
         }
-        if (Array.isArray(activityData)) {
-          setActivityCount(activityData.length.toString());
+        if (activityRes.status === "success") {
+          setActivityCount(activityRes.data.length.toString());
         }
       } catch (error) {
         console.error("Failed to fetch initial stats:", error);
@@ -235,7 +222,6 @@ export function Dashboard({ token, handleLogout }: DashboardProps) {
               />
             </div>
           </div>
-
           <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-6">
             <h2 className="text-xl font-semibold text-white mb-6 flex items-center">
               <TrendingUp className="w-5 h-5 mr-2 text-blue-400" /> Portfolio
@@ -245,7 +231,7 @@ export function Dashboard({ token, handleLogout }: DashboardProps) {
               <ApiButton
                 title="Portfolio Overview"
                 icon={<TrendingUp className="w-4 h-4" />}
-                apiFn={() => getPortfolio(token)}
+                apiFn={() => getPortfolioOverview(token)}
                 setApiResult={setApiResult}
                 setIsLoading={setIsLoading}
               />
@@ -259,7 +245,7 @@ export function Dashboard({ token, handleLogout }: DashboardProps) {
               <ApiButton
                 title="NFT Collection"
                 icon={<Image className="w-4 h-4" />}
-                apiFn={() => getPortfolioNFT(token)}
+                apiFn={() => getPortfolioNFTs(token)}
                 setApiResult={setApiResult}
                 setIsLoading={setIsLoading}
               />
@@ -273,18 +259,8 @@ export function Dashboard({ token, handleLogout }: DashboardProps) {
             </div>
           </div>
         </div>
-
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-6">
-            <h2 className="text-xl font-semibold text-white mb-4 flex items-center">
-              <Lock className="w-5 h-5 mr-2 text-yellow-400" /> Data Signing
-            </h2>
-            <p className="text-gray-400">
-              Functionality to sign messages and typed data will be implemented
-              here.
-            </p>
-          </div>
-          <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-6">
+          <div className="lg:col-start-1 lg:col-end-3 bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-6">
             <h2 className="text-xl font-semibold text-white mb-6 flex items-center">
               <Zap className="w-5 h-5 mr-2 text-pink-400" /> Smart Intents
             </h2>
@@ -311,7 +287,6 @@ export function Dashboard({ token, handleLogout }: DashboardProps) {
           </div>
         </div>
       </div>
-
       <ResultModal
         isOpen={!!(apiResult || isLoading)}
         onClose={() => setApiResult(null)}

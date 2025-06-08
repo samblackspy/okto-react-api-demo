@@ -4,26 +4,33 @@ import {
   Routes,
   Route,
   Navigate,
-  useSearchParams,
   useNavigate,
 } from "react-router-dom";
 import { Dashboard } from "./components/Dashboard";
 import { LoginScreen } from "./components/LoginScreen";
-import { TransferToken } from "./components/TransferToken";
+import TransferToken from "./components/TransferToken";
+import { AuthResponseData } from "./services/oktoApi";
 
 function App() {
   const [token, setToken] = useState<string | null>(
     localStorage.getItem("token")
   );
+  const [sessionKey, setSessionKey] = useState<string | null>(
+    localStorage.getItem("sessionKey")
+  );
 
-  const handleLogin = (authToken: string) => {
-    localStorage.setItem("token", authToken);
-    setToken(authToken);
+  const handleLogin = (authData: AuthResponseData) => {
+    localStorage.setItem("token", authData.auth_token);
+    localStorage.setItem("sessionKey", authData.session_priv_key);
+    setToken(authData.auth_token);
+    setSessionKey(authData.session_priv_key);
   };
 
   const handleLogout = () => {
     localStorage.removeItem("token");
+    localStorage.removeItem("sessionKey");
     setToken(null);
+    setSessionKey(null);
   };
 
   return (
@@ -53,8 +60,11 @@ function App() {
           <Route
             path="/transfertoken"
             element={
-              token ? (
-                <TransferTokenWithParams token={token} />
+              token && sessionKey ? (
+                <TransferTokenWithParams
+                  token={token}
+                  sessionKey={sessionKey}
+                />
               ) : (
                 <Navigate
                   to="/login"
@@ -70,21 +80,24 @@ function App() {
   );
 }
 
-// Wrapper component to handle URL params
-function TransferTokenWithParams({ token }: { token: string }) {
-  const [searchParams] = useSearchParams();
-  const type = searchParams.get("type");
+function TransferTokenWithParams({
+  token,
+  sessionKey,
+}: {
+  token: string;
+  sessionKey: string;
+}) {
   const navigate = useNavigate();
-
-  const handleBack = () => {
-    navigate("/");
-  };
+  const handleBack = () => navigate("/");
 
   return (
     <TransferToken
       token={token}
-      defaultTab={type === "raw" ? "RAW_TRANSACTION" : "TOKEN_TRANSFER"}
+      sessionKey={sessionKey}
       onBack={handleBack}
+      onSuccess={(jobId) => {
+        console.log("Transaction Submitted Successfully. Job ID:", jobId);
+      }}
     />
   );
 }

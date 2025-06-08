@@ -3,10 +3,10 @@ import {
   CredentialResponse,
 } from "@react-oauth/google";
 import { useState } from "react";
-import { authenticateWithOkto, isSuccessAuth } from "../services/oktoApi";
+import { authenticateWithOkto, AuthResponseData } from "../services/oktoApi";
 
 type GoogleLoginProps = {
-  onLoginSuccess: (token: string) => void;
+  onLoginSuccess: (authData: AuthResponseData) => void;
 };
 
 export function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
@@ -16,33 +16,28 @@ export function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
     credentialResponse: CredentialResponse
   ) => {
     console.log("Received Google credential response:", credentialResponse);
-
     const idToken = credentialResponse.credential;
 
     if (!idToken) {
       setStatus("Google login succeeded but did not return an ID token.");
       return;
     }
-
-    setStatus("Got Google ID token, now authenticating with Okto...");
-
+    setStatus("Got Google ID token, authenticating with Okto...");
     try {
       const finalAuthResponse = await authenticateWithOkto(idToken, "google");
-
-      if (isSuccessAuth(finalAuthResponse)) {
+      if (finalAuthResponse.status === "success") {
         setStatus("Okto Login Successful!");
-        onLoginSuccess(finalAuthResponse.data.auth_token);
-      } else if (typeof finalAuthResponse !== "string") {
+        onLoginSuccess(finalAuthResponse.data);
+      } else {
         const errorMessage =
           finalAuthResponse.message || "Final authentication with Okto failed.";
         setStatus(`Error: ${errorMessage}`);
         console.error("Okto Auth Error:", finalAuthResponse);
-      } else {
-        setStatus("An unknown error occurred during authentication");
-        console.error("Unexpected authentication response:", finalAuthResponse);
       }
     } catch (error) {
-      setStatus("An error occurred during Okto authentication.");
+      const errorMessage =
+        error instanceof Error ? error.message : "An unknown error occurred.";
+      setStatus(`Error: ${errorMessage}`);
       console.error(error);
     }
   };
@@ -64,9 +59,7 @@ export function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
       </div>
       {status && (
         <p
-          className={`text-center text-sm ${
-            status.startsWith("Error:") ? "text-red-400" : "text-gray-400"
-          }`}
+          className={`text-center text-sm ${status.startsWith("Error:") ? "text-red-400" : "text-gray-400"}`}
         >
           {status}
         </p>
